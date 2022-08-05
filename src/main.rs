@@ -7,21 +7,19 @@ mod editor;
 use editor_core::{cli_handler, file_handler::FileHandler};
 use editor::custom::CustomEditorState;
 
-
 fn main() {
 
-    // If cli_parser returns filename then populate the buffer
+    // Check for filepath in CLI arguments
     let mut app = if let Some(file) = cli_handler::parse() {
-        debug!("printing file {:?}", file);
+        debug!("file {:?}", file);
         let mut fd = FileHandler::from(file);
         let buffer = fd.read_lined_buffer();
-
+        // Open Editor with File contents
         CustomEditorState::from(buffer, fd)
     } else {
-        // open TUI with empty buffer
+        // Open Editor with empty buffer
         CustomEditorState::new()
     };
-
-
+    // Blocking Call
     let _result = app.run();
 }

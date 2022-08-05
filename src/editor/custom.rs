@@ -197,7 +197,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &CustomEditorState) {
                 Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" to exit, "),
                 Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to start editing,"),
+                Span::raw(" to start editing, "),
                 Span::styled("w", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" to save."),
             ],
@@ -218,14 +218,6 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &CustomEditorState) {
     text.patch_style(style);
     let help_message = Paragraph::new(text);
     f.render_widget(help_message, chunks[1]);
-
-    // let input = Paragraph::new(app.input.as_ref())
-    //     .style(match app.input_mode {
-    //         InputMode::Normal => Style::default(),
-    //         InputMode::Editing => Style::default().fg(Color::Yellow),
-    //     })
-    //     .block(Block::default().borders(Borders::ALL).title("Input"));
-    // f.render_widget(input, chunks[1]);
 
     match app.input_mode {
         InputMode::Normal => {
