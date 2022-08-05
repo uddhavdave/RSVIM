@@ -1,10 +1,11 @@
 pub use std::io;
 
-pub enum EditorError {
-    WrongFilePath,
-    FileNotSaved,
-}
+// pub enum EditorError {
+//     WrongFilePath,
+//     FileNotSaved,
+// }
 
+//TODO Add trait for Apps running Backend
 // Note: This Trait allows users to implement their own control logic (for example switching from Vim Key Settings to Emacs Key Settings) 
 // 
 // This will handle the 

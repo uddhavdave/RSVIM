@@ -1,3 +1,5 @@
+use crate::editor_core::file_handler::FileHandler;
+
 use super::*;
 
 use crossterm::{
@@ -13,7 +15,6 @@ use tui::{
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
-use unicode_width::UnicodeWidthStr;
 use std::str;
 
 enum InputMode {
@@ -21,30 +22,32 @@ enum InputMode {
     Editing,
 }
 
+const HORIZONTAL_OFFSET : u16 = 6;
+const VERTICAL_OFFSET : u16 = 1;
 /// Keeps track of editor state
 pub(crate) struct CustomEditorState {
     /// User Input 
-    input: String,
+    input: Vec<u8>,
     /// Text Editor Mode
     input_mode: InputMode,
     /// Display Buffer
-    buffer: Vec<u8>,
-    /// X Coordinate of Cursor
-    cursor_x_pos: usize,
-    /// Y Coordinate of Cursor 
-    cursor_y_pos: usize,
+    buffer: Vec<Vec<u8>>,
+    /// Cursor position relative to Block
+    cursor_line_position: (usize, usize),
+    /// File Read Write handler
+    file_handler: Option<FileHandler>,
 }
 
 /// Sets the initial state of the editor 
 impl Default for CustomEditorState {
     fn default() -> CustomEditorState {
         CustomEditorState {
-            input: String::new(),
+            input: Vec::new(),
             /// Always start editor in viewing mode
             input_mode: InputMode::Normal,
             buffer: Vec::new(),
-            cursor_x_pos: 0,
-            cursor_y_pos: 0,
+            cursor_line_position: ( 0 , 0 ),
+            file_handler: None,
         }
     }
 }
@@ -54,9 +57,10 @@ impl CustomEditorState {
         CustomEditorState::default()
     }
 
-    pub fn from(buffer: Vec<u8>) -> Self {
+    pub fn from(buffer: Vec<Vec<u8>>, fd: FileHandler) -> Self {
         CustomEditorState {
             buffer: buffer,
+            file_handler: Some(fd),
             ..Default::default()
         }
     }
@@ -97,43 +101,72 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut CustomEditorState) 
                 InputMode::Normal => match key.code {
                     KeyCode::Char('e') => {
                         app.input_mode = InputMode::Editing;
+
+                        // Read the current line from buffer
+                        app.input = app.buffer[app.cursor_line_position.1].clone();
                     }
                     KeyCode::Char('q') => {
                         return Ok(());
                     }
                     KeyCode::Char('l') => {
-                        app.cursor_x_pos += 1;
+                        if app.cursor_line_position.0 < app.buffer[app.cursor_line_position.1].len() - 1 {
+                            app.cursor_line_position = (app.cursor_line_position.0 + 1, app.cursor_line_position.1);
+                        }
                     }
                     KeyCode::Char('h') => {
-                        if app.cursor_x_pos > 0 {
-                            app.cursor_x_pos -= 1;
+                        if app.cursor_line_position.0 > 0 {
+                            app.cursor_line_position = (app.cursor_line_position.0 - 1, app.cursor_line_position.1);
                         }
                     }
                     KeyCode::Char('j') => {
-                        app.cursor_y_pos += 1;
+                        if app.cursor_line_position.1 < app.buffer.len() - 1 {
+                            app.cursor_line_position = (app.cursor_line_position.0 , app.cursor_line_position.1 + 1);
+                        }
                     }
                     KeyCode::Char('k') => {
-                        if app.cursor_y_pos > 0 {
-                            app.cursor_y_pos -= 1;
+                        if app.cursor_line_position.1 > 0 {
+                            app.cursor_line_position = (app.cursor_line_position.0 , app.cursor_line_position.1 - 1);
                         }
                     }
                     KeyCode::Char('w') => {
                         // Save the file
-                        todo!();
+                        if let Some(file_handler) = &app.file_handler {
+                            file_handler.write_lined_buffer(app.buffer.clone())?;
+                        } else {
+                            // Ask for filename and save 
+                        }
                     }
                     _ => {}
                 },
                 InputMode::Editing => match key.code {
                     KeyCode::Enter => {
-                        for char in app.input.as_bytes() {
-                            app.buffer.push(*char);
-                        }
+                        // when Enter key is pressed, the line will be split at the current position
+                        let (prev_line, next_line) = app.input.split_at(app.cursor_line_position.0);
+
+                        // Update the previous line in the buffer
+                        app.buffer[app.cursor_line_position.1].clear();
+                        app.buffer[app.cursor_line_position.1] = prev_line.to_vec();
+                        
+                        // Add next line to the buffer 
+                        app.cursor_line_position = ( 0, app.cursor_line_position.1 + 1);
+                        app.buffer.insert(app.cursor_line_position.1, Vec::new());
+                        
+                        // Update the newly inserted line
+                        app.buffer[app.cursor_line_position.1].clear();
+                        app.buffer[app.cursor_line_position.1] = next_line.to_vec();
+
+                        // Change current line buffer, set it to next line
+                        app.input = next_line.to_vec();
                     }
                     KeyCode::Char(c) => {
-                        app.input.push(c);
+                        app.input.insert(app.cursor_line_position.0, c as u8);
+                        app.cursor_line_position = ( app.cursor_line_position.0 + 1, app.cursor_line_position.1);
+                        app.buffer[app.cursor_line_position.1] = app.input.clone();
                     }
                     KeyCode::Backspace => {
-                        app.input.pop();
+                        app.input.remove(app.cursor_line_position.0);
+                        app.cursor_line_position = ( app.cursor_line_position.0 - 1, app.cursor_line_position.1);
+                        app.buffer[app.cursor_line_position.1] = app.input.clone();
                     }
                     KeyCode::Esc => {
                         app.input_mode = InputMode::Normal;
@@ -150,8 +183,8 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &CustomEditorState) {
         .direction(Direction::Vertical)
         .constraints(
             [
-                Constraint::Length(1),
                 Constraint::Min(1),
+                Constraint::Length(1),
             ]
             .as_ref(),
         )
@@ -164,7 +197,9 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &CustomEditorState) {
                 Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" to exit, "),
                 Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(" to start editing."),
+                Span::raw(" to start editing,"),
+                Span::styled("w", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" to save."),
             ],
             Style::default().add_modifier(Modifier::RAPID_BLINK),
         ),
@@ -182,7 +217,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &CustomEditorState) {
     let mut text = Text::from(Spans::from(msg));
     text.patch_style(style);
     let help_message = Paragraph::new(text);
-    f.render_widget(help_message, chunks[0]);
+    f.render_widget(help_message, chunks[1]);
 
     // let input = Paragraph::new(app.input.as_ref())
     //     .style(match app.input_mode {
@@ -191,14 +226,15 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &CustomEditorState) {
     //     })
     //     .block(Block::default().borders(Borders::ALL).title("Input"));
     // f.render_widget(input, chunks[1]);
+
     match app.input_mode {
         InputMode::Normal => {
             // Move the cursor with VIM Key Strokes
             f.set_cursor(
                 // Put cursor past the end of the input text
-                chunks[1].x + app.cursor_x_pos as u16,
+                chunks[0].x + app.cursor_line_position.0 as u16 + HORIZONTAL_OFFSET,
                 // Move one line down, from the border to the input line
-                chunks[1].y + app.cursor_y_pos as u16,
+                chunks[0].y + app.cursor_line_position.1 as u16 + VERTICAL_OFFSET,
             )
         }
 
@@ -206,17 +242,19 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &CustomEditorState) {
             // Make the cursor visible and ask tui-rs to put it at the specified coordinates after rendering
             f.set_cursor(
                 // Put cursor past the end of the input text
-                chunks[1].x + app.input.width() as u16 + 1,
+                chunks[0].x + app.cursor_line_position.0 as u16 + HORIZONTAL_OFFSET,
                 // Move one line down, from the border to the input line
-                chunks[1].y + 1,
+                chunks[0].y + app.cursor_line_position.1 as u16 + VERTICAL_OFFSET,
             )
         }
     }
-    let messages = match str::from_utf8(&app.buffer) {
-        Ok(v) => v,
+
+    let lines = app.buffer.iter().enumerate().map(|(line_number, line)| match str::from_utf8(&line) {
+        Ok(v) => format!("{:4} {}", line_number, v),
         Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-    };
-    let messages =
-        Paragraph::new(messages).block(Block::default().borders(Borders::ALL));
-    f.render_widget(messages, chunks[1]);
+    }).collect::<Vec<String>>().join("\n");
+    let para =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL));
+    f.render_widget(para, chunks[0]);
 }
+
